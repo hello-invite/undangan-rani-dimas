@@ -54,6 +54,9 @@ form .btn{padding:14px;background:var(--gold);color:var(--deep);font-weight:500;
 .end{padding:20px 28px 100px;text-align:center;background:var(--bg)}
 .end h2{font-size:3rem;margin-top:14px}
 
+.w{background:rgba(255,255,255,.07);border:1px solid rgba(217,180,140,.35);border-radius:14px;padding:12px 14px}
+.w b{font-weight:500}.w span{display:block;font-size:.7rem;opacity:.7;margin:2px 0 6px}.w p{font-size:.85rem;white-space:pre-wrap;word-break:break-word;opacity:1}
+#wishes{max-height:380px;overflow-y:auto;text-align:left;margin-top:30px;display:grid;gap:10px;padding-right:4px;align-content:start}
 /* LAIN-LAIN */
 #music{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:40;width:44px;height:44px;border-radius:50%;border:1px solid var(--gold);background:rgba(36,5,8,.85);color:var(--cream);font-size:1.1rem;display:none;cursor:pointer}
 #music.spin{animation:spin 6s linear infinite}
@@ -98,15 +101,17 @@ form .btn{padding:14px;background:var(--gold);color:var(--deep);font-weight:500;
   <div class="slide"><video poster="07-galeri.webp" muted loop playsinline preload="auto"><source src="07-galeri.mp4" type="video/mp4"></video></div>
 
   <section id="rsvp">
-    <h2>Konfirmasi Kehadiran</h2>
-    <p>Isi di bawah, lalu pesan terbuka di WhatsApp mempelai.</p>
-    <form id="form">
+    <h2>Konfirmasi &amp; Ucapan</h2>
+    <p>Isi kehadiran Anda dan tinggalkan doa untuk kami.</p>
+    <form id="form" autocomplete="off">
       <input id="nm" placeholder="Nama Anda" required maxlength="80">
       <select id="st"><option>Hadir</option><option>Tidak hadir</option></select>
       <select id="jm"><option>1 orang</option><option>2 orang</option><option>3 orang</option><option>4 orang</option></select>
       <textarea id="ms" rows="3" placeholder="Ucapan dan doa untuk kami" maxlength="300"></textarea>
-      <button class="btn" type="submit">Kirim lewat WhatsApp</button>
+      <input id="hp" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px">
+      <button class="btn" id="sendBtn" type="submit">Kirim</button>
     </form>
+    <div id="wishes"></div>
   </section>
 
   <section class="end">
@@ -122,7 +127,7 @@ const DATA = {
   tanggal: "2026-11-26T09:00:00+07:00",
   kalenderMulai: "20261126T020000Z", kalenderAkhir: "20261126T060000Z",
   judulKalender: "Pernikahan Rani & Dimas",
-  wa: "6281234567890",                       // nomor WA mempelai: 62..., tanpa +
+  api: "",                                   // alamat Web app Google Apps Script (akhiran /exec)
   musik: "musik.mp3",
   lokasi: "Horison Altama Pandeglang",
   rekening: ["112345678890", "98765400311"]  // kartu atas, kartu bawah (samakan dengan desain)
@@ -178,12 +183,41 @@ cover.onclick=()=>{
   setTimeout(openInvite,7500);
 };
 
-// RSVP -> WhatsApp
-$('#form').onsubmit=e=>{
+// RSVP + ucapan yang tampil untuk semua tamu
+const wl=$('#wishes'), WK='wishes_local';
+function ago(t){const s=(Date.now()-new Date(t))/1000; if(isNaN(s))return''; if(s<60)return'baru saja'; if(s<3600)return Math.floor(s/60)+' menit lalu'; if(s<86400)return Math.floor(s/3600)+' jam lalu'; return Math.floor(s/86400)+' hari lalu';}
+function render(list){
+  wl.textContent='';
+  if(!list.length){const p=document.createElement('p');p.textContent='Jadilah yang pertama memberi ucapan.';wl.appendChild(p);return;}
+  list.forEach(w=>{const d=document.createElement('div');d.className='w';
+    const n=document.createElement('b');n.textContent=w.nama;
+    const s=document.createElement('span');s.textContent=(w.status==='Hadir'?'Hadir':'Tidak hadir')+' · '+ago(w.t);
+    d.append(n,s); if(w.ucapan){const p=document.createElement('p');p.textContent=w.ucapan;d.appendChild(p);} wl.appendChild(d);});
+}
+async function load(){
+  try{
+    if(DATA.api){ const r=await fetch(DATA.api+'?t='+Date.now()); render(await r.json()); }
+    else render(JSON.parse(localStorage.getItem(WK)||'[]'));
+  }catch(err){ wl.textContent='Ucapan belum bisa dimuat.'; }
+}
+$('#form').onsubmit=async e=>{
   e.preventDefault();
-  const t=`Halo, saya ${$('#nm').value}.\nKonfirmasi: ${$('#st').value} (${$('#jm').value})\nUcapan: ${$('#ms').value||'-'}`;
-  window.open('https://wa.me/'+DATA.wa+'?text='+encodeURIComponent(t),'_blank');
+  if($('#hp').value) return;
+  if(Date.now()-(+localStorage.getItem('wl_t')||0)<20000){ toast('Tunggu sebentar ya'); return; }
+  const d={nama:$('#nm').value.trim(),status:$('#st').value,jumlah:$('#jm').value,ucapan:$('#ms').value.trim()};
+  const b=$('#sendBtn'); b.disabled=true; b.textContent='Mengirim...';
+  try{
+    if(DATA.api){
+      await fetch(DATA.api,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(d)});
+      await new Promise(r=>setTimeout(r,1000));
+    }else{
+      const l=JSON.parse(localStorage.getItem(WK)||'[]'); l.unshift({...d,t:new Date().toISOString()}); localStorage.setItem(WK,JSON.stringify(l.slice(0,50)));
+    }
+    localStorage.setItem('wl_t',Date.now()); $('#form').reset(); toast('Terima kasih, terkirim'); await load();
+  }catch(err){ toast('Gagal mengirim, coba lagi'); }
+  b.disabled=false; b.textContent='Kirim';
 };
+load();
 </script>
 </body>
 </html>
